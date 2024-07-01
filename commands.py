@@ -67,25 +67,20 @@ class fzf_select(Command):
     :fzf_select
     Find a file using fzf.
     With a prefix argument to select only directories.
-
     See: https://github.com/junegunn/fzf
     """
-
     def execute(self):
         import subprocess
         import os
         from ranger.ext.get_executables import get_executables
-
         if 'fzf' not in get_executables():
             self.fm.notify('Could not find fzf in the PATH.', bad=True)
             return
-
         fd = None
         if 'fdfind' in get_executables():
             fd = 'fdfind'
         elif 'fd' in get_executables():
             fd = 'fd'
-
         if fd is not None:
             hidden = ('--hidden' if self.fm.settings.show_hidden else '')
             exclude = "--no-ignore-vcs --exclude '.git' --exclude '*.py[co]' --exclude '__pycache__'"
@@ -100,19 +95,20 @@ class fzf_select(Command):
             fzf_default_command = 'find -L . -mindepth 1 {} -o {} -o {} -print | cut -b3-'.format(
                 hidden, exclude, only_directories
             )
-
         env = os.environ.copy()
         env['FZF_DEFAULT_COMMAND'] = fzf_default_command
-        # env['FZF_DEFAULT_OPTS'] = '--height=40% --layout=reverse --ansi --preview="{}"'.format('''
-        #     (
-        #         batcat --color=always {} ||
-        #         bat --color=always {} ||
-        #         cat {} ||
-        #         tree -ahpCL 3 -I '.git' -I '*.py[co]' -I '__pycache__' {}
-        #     ) 2>/dev/null | head -n 100
-        # ''')
-
-        fzf = self.fm.execute_command('fzf --no-multi', env=env,
+        
+        # Custom FZF options
+        fzf_options = (
+            '--preview "bat --style=numbers,changes,header,grid --color=always --theme=Nord {}" '
+            '--preview-window=right:60% '
+            '--bind "ctrl-/:toggle-preview" '
+            '--header "Global Search" '
+            '--border=sharp --margin=1 --info=inline-right --no-scrollbar '
+            '--prompt ""'
+        )
+        
+        fzf = self.fm.execute_command(f'fzf --no-multi {fzf_options}', env=env,
                                       universal_newlines=True, stdout=subprocess.PIPE)
         stdout, _ = fzf.communicate()
         if fzf.returncode == 0:
