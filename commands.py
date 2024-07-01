@@ -103,14 +103,14 @@ class fzf_select(Command):
 
         env = os.environ.copy()
         env['FZF_DEFAULT_COMMAND'] = fzf_default_command
-        env['FZF_DEFAULT_OPTS'] = '--height=40% --layout=reverse --ansi --preview="{}"'.format('''
-            (
-                batcat --color=always {} ||
-                bat --color=always {} ||
-                cat {} ||
-                tree -ahpCL 3 -I '.git' -I '*.py[co]' -I '__pycache__' {}
-            ) 2>/dev/null | head -n 100
-        ''')
+        # env['FZF_DEFAULT_OPTS'] = '--height=40% --layout=reverse --ansi --preview="{}"'.format('''
+        #     (
+        #         batcat --color=always {} ||
+        #         bat --color=always {} ||
+        #         cat {} ||
+        #         tree -ahpCL 3 -I '.git' -I '*.py[co]' -I '__pycache__' {}
+        #     ) 2>/dev/null | head -n 100
+        # ''')
 
         fzf = self.fm.execute_command('fzf --no-multi', env=env,
                                       universal_newlines=True, stdout=subprocess.PIPE)
@@ -121,3 +121,26 @@ class fzf_select(Command):
                 self.fm.cd(selected)
             else:
                 self.fm.select_file(selected)
+
+
+class fzf_locate(Command):
+    """
+    :fzf_locate
+    Find a file using fzf.
+    With a prefix argument select only directories.
+    See: https://github.com/junegunn/fzf
+    """
+    def execute(self):
+        import subprocess
+        if self.quantifier:
+            command="locate / | fzf -e -i"
+        else:
+            command="locate / | fzf -e -i"
+        fzf = self.fm.execute_command(command, stdout=subprocess.PIPE)
+        stdout, stderr = fzf.communicate()
+        if fzf.returncode == 0:
+            fzf_file = os.path.abspath(stdout.decode('utf-8').rstrip('\n'))
+            if os.path.isdir(fzf_file):
+                self.fm.cd(fzf_file)
+            else:
+                self.fm.select_file(fzf_file)
