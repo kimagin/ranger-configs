@@ -15,6 +15,12 @@ import os
 # You always need to import ranger.api.commands here to get the Command class:
 from ranger.api.commands import Command
 
+#Navigate
+import time
+import subprocess
+
+from ranger.api.commands import Command
+from ranger.ext.get_executables import get_executables
 
 # Any class that is a subclass of "Command" will be integrated into ranger as a
 # command.  Try typing ":my_edit<ENTER>" in ranger!
@@ -62,61 +68,59 @@ class my_edit(Command):
         return self._tab_directory_content()
 
 
+
+
+
+
+
+
 class fzf_select(Command):
     """
     :fzf_select
-    Find a file using fzf.
+    Find a file using fzf and rg with enhanced preview and styling.
     With a prefix argument to select only directories.
-    See: https://github.com/junegunn/fzf
     """
     def execute(self):
-        import subprocess
-        import os
-        from ranger.ext.get_executables import get_executables
-        if 'fzf' not in get_executables():
-            self.fm.notify('Could not find fzf in the PATH.', bad=True)
-            return
-        fd = None
-        if 'fdfind' in get_executables():
-            fd = 'fdfind'
-        elif 'fd' in get_executables():
-            fd = 'fd'
-        if fd is not None:
-            hidden = ('--hidden' if self.fm.settings.show_hidden else '')
-            exclude = "--no-ignore-vcs --exclude '.git' --exclude '*.py[co]' --exclude '__pycache__'"
-            only_directories = ('--type directory' if self.quantifier else '')
-            fzf_default_command = '{} --follow {} {} {} --color=always'.format(
-                fd, hidden, exclude, only_directories
-            )
-        else:
-            hidden = ('-false' if self.fm.settings.show_hidden else r"-path '*/\.*' -prune")
-            exclude = r"\( -name '\.git' -o -name '*.py[co]' -o -fstype 'dev' -o -fstype 'proc' \) -prune"
-            only_directories = ('-type d' if self.quantifier else '')
-            fzf_default_command = 'find -L . -mindepth 1 {} -o {} -o {} -print | cut -b3-'.format(
-                hidden, exclude, only_directories
-            )
-        env = os.environ.copy()
-        env['FZF_DEFAULT_COMMAND'] = fzf_default_command
+        hidden = '--hidden' if self.fm.settings.show_hidden else ''
+        only_directories = '--type d' if self.quantifier else ''
         
-        # Custom FZF options
-        fzf_options = (
-            '--preview "bat --style=numbers,changes,header,grid --color=always --theme=Nord {}" '
-            '--preview-window=right:60% '
-            '--bind "ctrl-/:toggle-preview" '
-            '--header "Global Search" '
-            '--border=sharp --margin=1 --info=inline-right --no-scrollbar '
-            '--prompt ""'
-        )
-        
-        fzf = self.fm.execute_command(f'fzf --no-multi {fzf_options}', env=env,
-                                      universal_newlines=True, stdout=subprocess.PIPE)
-        stdout, _ = fzf.communicate()
-        if fzf.returncode == 0:
-            selected = os.path.abspath(stdout.strip())
-            if os.path.isdir(selected):
-                self.fm.cd(selected)
-            else:
-                self.fm.select_file(selected)
+        rg_command = f"rg --files {hidden} {only_directories} " \
+                     f"--glob '!.git' --glob '!*.py[co]' --glob '!__pycache__' " \
+                     f"--glob '!node_modules' --glob '!.vscode' --glob '!.Trash' " \
+                     f"--no-messages --no-ignore-vcs"
+
+        preview_command = '''
+            bat --style=numbers,changes,header --color=always --theme=Nord --line-range :100 {}
+        '''
+
+        fzf_command = f'fzf --ansi '\
+                      f'--preview "{preview_command}" '\
+                      f'--preview-window=right:50% '\
+                      f'--bind "ctrl-/:toggle-preview" '\
+                      f'--header "Search Files in CD/ " '\
+                      f'--border=sharp --margin=1 --info=inline-right --no-scrollbar '\
+                      f'--prompt "" '
+
+        try:
+            process = subprocess.Popen(
+                f'{rg_command} | {fzf_command}',
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                text=True
+            )
+            stdout, stderr = process.communicate()
+
+            if process.returncode == 0 and stdout:
+                selected = os.path.abspath(stdout.strip())
+                if os.path.isdir(selected):
+                    self.fm.cd(selected)
+                else:
+                    self.fm.select_file(selected)
+            elif process.returncode != 130:  # 130 is the exit code when fzf is cancelled
+                self.fm.notify('fzf_select failed', bad=True)
+        except Exception as e:
+            self.fm.notify(f'Error in fzf_select: {str(e)}', bad=True)
 
 
 class fzf_locate(Command):
@@ -147,3 +151,46 @@ class fzf_locate(Command):
                 self.fm.cd(fzf_file)
             else:
                 self.fm.select_file(fzf_file)
+
+
+
+        def show_error_in_console(msg, fm):
+            fm.notify(msg, bad=True)
+
+        def navigate_path(fm, selected):
+            if not selected:
+                return
+
+            selected = os.path.abspath(selected)
+            if os.path.isdir(selected):
+                fm.cd(selected)
+            elif os.path.isfile(selected):
+                fm.select_file(selected)
+            else:
+                show_error_in_console(f"Neither directory nor file: {selected}", fm)
+                return
+
+        def select_with_fzf(fzf_cmd, input, fm):
+            fm.ui.suspend()
+            try:
+                # stderr is used to open to attach to /dev/tty
+                proc = subprocess.Popen(fzf_cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True)
+                stdout, _ = proc.communicate(input=input)
+
+                # ESC gives 130
+                if proc.returncode not in [0, 130]:
+                    raise Exception(f"Bad process exit code: {proc.returncode}, stdout={stdout}")
+            finally:
+                fm.ui.initialize()
+            return stdout.strip()
+
+class dir_history_navigate(Command):
+    def execute(self):
+        lst = []
+        for d in reversed(self.fm.tabs[self.fm.current_tab].history.history):
+            lst.append(d.path)
+
+        fm = self.fm
+        selected = select_with_fzf(["fzf"], "\n".join(lst), fm)
+
+        navigate_path(fm, selected)
