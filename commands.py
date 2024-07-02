@@ -69,11 +69,6 @@ class my_edit(Command):
 
 
 
-
-
-
-
-
 class fzf_select(Command):
     """
     :fzf_select
@@ -81,6 +76,8 @@ class fzf_select(Command):
     With a prefix argument to select only directories.
     """
     def execute(self):
+        import subprocess
+
         hidden = '--hidden' if self.fm.settings.show_hidden else ''
         only_directories = '--type d' if self.quantifier else ''
         
@@ -102,14 +99,20 @@ class fzf_select(Command):
                       f'--prompt "" '
 
         try:
-            process = subprocess.Popen(
-                f'{rg_command} | {fzf_command}',
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                shell=True,
-                text=True
-            )
-            stdout, stderr = process.communicate()
+            # Suspend the UI
+            self.fm.ui.suspend()
+            try:
+                process = subprocess.Popen(
+                    f'{rg_command} | {fzf_command}',
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=True,
+                    text=True
+                )
+                stdout, stderr = process.communicate()
+            finally:
+                # Reinitialize the UI
+                self.fm.ui.initialize()
 
             if process.returncode == 0 and stdout:
                 selected = os.path.abspath(stdout.strip())
@@ -121,6 +124,7 @@ class fzf_select(Command):
                 self.fm.notify('fzf_select failed', bad=True)
         except Exception as e:
             self.fm.notify(f'Error in fzf_select: {str(e)}', bad=True)
+
 
 
 class fzf_locate(Command):
