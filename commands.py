@@ -122,16 +122,23 @@ class fzf_select(Command):
 class fzf_locate(Command):
     """
     :fzf_locate
-    Find a file using fzf.
+    Find a file using rg and fzf.
     With a prefix argument select only directories.
-    See: https://github.com/junegunn/fzf
+    See: https://github.com/BurntSushi/ripgrep and https://github.com/junegunn/fzf
     """
     def execute(self):
         import subprocess
+        
+        exclude_dirs = ['.git', 'node_modules', '.trash','.Trash']
+        exclude_args = ' '.join([f"--glob '!{d}'" for d in exclude_dirs])
+        
         if self.quantifier:
-            command="locate / | fzf -e -i"
+            # Select only directories
+            command = f"rg --hidden --files --null {exclude_args} $HOME | xargs -0 dirname | uniq | fzf -e -i --algo=v1"
         else:
-            command="locate / | fzf -e -i"
+            # Select files and directories
+            command = f"rg --hidden --files --null {exclude_args} $HOME | fzf -e -i --algo=v1 --read0"
+        
         fzf = self.fm.execute_command(command, stdout=subprocess.PIPE)
         stdout, stderr = fzf.communicate()
         if fzf.returncode == 0:
