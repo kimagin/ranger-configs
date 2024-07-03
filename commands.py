@@ -18,8 +18,8 @@ from ranger.api.commands import Command
 #Navigate
 import time
 import subprocess
+from PIL import Image
 
-from ranger.api.commands import Command
 from ranger.ext.get_executables import get_executables
 
 # Any class that is a subclass of "Command" will be integrated into ranger as a
@@ -198,3 +198,80 @@ class dir_history_navigate(Command):
         selected = select_with_fzf(["fzf"], "\n".join(lst), fm)
 
         navigate_path(fm, selected)
+
+
+class preview_image(Command):
+    """
+    :preview_image
+    Preview the selected image using termimage in a new Windows Terminal window.
+    """
+    def execute(self):
+        file = self.fm.thisfile
+        if file.image:
+            file_path = file.path
+            try:
+                # Get the current terminal size and calculate preview size
+                term_width, term_height = self.get_terminal_size()
+                preview_width, preview_height = self.calculate_preview_size(term_width, term_height)
+
+                # Convert Windows path to WSL path
+                wsl_path = self.convert_path_to_wsl(file_path)
+
+                # Construct the command to open the image with termimage in a new Windows Terminal
+                termimage_command = f"termimage '{wsl_path}' -s {preview_width}x{preview_height} -a truecolor && read -n 1"
+                wt_command = f'wt.exe --title "Image Preview" wsl.exe -e bash -c "{termimage_command}"'
+                
+                # Execute the command
+                subprocess.Popen(wt_command, shell=True)
+            except Exception as e:
+                self.fm.notify(f"Error: {str(e)}", bad=True)
+        else:
+            self.fm.notify("Selected file is not an image.", bad=True)
+
+    def get_terminal_size(self):
+        try:
+            return os.get_terminal_size()
+        except OSError:
+            return 80, 24  # Default fallback size
+
+    def calculate_preview_size(self, term_width, term_height):
+        # Maximum dimensions
+        MAX_WIDTH = 1024
+        MAX_HEIGHT = 1024
+
+        # Calculate initial size based on terminal dimensions
+        width = min(term_width - 4, MAX_WIDTH)  # Subtract 4 for some padding
+        height = min(term_height - 2, MAX_HEIGHT)  # Subtract 2 for some vertical padding
+
+        # Adjust for terminal aspect ratio
+        term_aspect = term_width / term_height
+        if term_aspect > 2:  # For very wide terminals, use half the width
+            width = width // 2
+        elif term_aspect < 0.5:  # For very tall terminals, use full width
+            pass
+        else:  # For more square terminals, use 2/3 of the width
+            width = (width * 2) // 3
+
+        # Ensure height is not too large compared to width
+        if height > width * 1.5:
+            height = int(width * 1.5)
+
+        return width, height
+
+    def convert_path_to_wsl(self, path):
+        try:
+            # First, convert to absolute path if it's not already
+            abs_path = os.path.abspath(path)
+            
+            # Replace backslashes with forward slashes
+            unix_path = abs_path.replace('\\', '/')
+            
+            # Replace drive letter with /mnt/c style path
+            if unix_path[1] == ':':
+                drive_letter = unix_path[0].lower()
+                unix_path = f"/mnt/{drive_letter}{unix_path[2:]}"
+            
+            return unix_path
+        except Exception as e:
+            self.fm.notify(f"Path conversion warning: {str(e)}", bad=False)
+            return path  # Return original path if conversion fails

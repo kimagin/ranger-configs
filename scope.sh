@@ -139,19 +139,19 @@ handle_image() {
         #           && exit 6 || exit 1;;
 
         ## Image
-        image/*)
-            local orientation
-            orientation="$( identify -format '%[EXIF:Orientation]\n' -- "${FILE_PATH}" )"
-            ## If orientation data is present and the image actually
-            ## needs rotating ("1" means no rotation)...
-            if [[ -n "$orientation" && "$orientation" != 1 ]]; then
-                ## ...auto-rotate the image according to the EXIF data.
-                convert -- "${FILE_PATH}" -auto-orient "${IMAGE_CACHE_PATH}" && exit 6
-            fi
+        # image/*)
+        #     local orientation
+        #     orientation="$( identify -format '%[EXIF:Orientation]\n' -- "${FILE_PATH}" )"
+        #     ## If orientation data is present and the image actually
+        #     ## needs rotating ("1" means no rotation)...
+        #     if [[ -n "$orientation" && "$orientation" != 1 ]]; then
+        #         ## ...auto-rotate the image according to the EXIF data.
+        #         convert -- "${FILE_PATH}" -auto-orient "${IMAGE_CACHE_PATH}" && exit 6
+        #     fi
 
-            ## `w3mimgdisplay` will be called for all images (unless overriden
-            ## as above), but might fail for unsupported types.
-            exit 7;;
+        #     ## `w3mimgdisplay` will be called for all images (unless overriden
+        #     ## as above), but might fail for unsupported types.
+        #     exit 7;;
 
         ## Video
         # video/*)
@@ -181,25 +181,25 @@ handle_image() {
         #     exit 1;;
 
         ## Font
-        application/font*|application/*opentype)
-            preview_png="/tmp/$(basename "${IMAGE_CACHE_PATH%.*}").png"
-            if fontimage -o "${preview_png}" \
-                         --pixelsize "120" \
-                         --fontname \
-                         --pixelsize "80" \
-                         --text "  ABCDEFGHIJKLMNOPQRSTUVWXYZ  " \
-                         --text "  abcdefghijklmnopqrstuvwxyz  " \
-                         --text "  0123456789.:,;(*!?') ff fl fi ffi ffl  " \
-                         --text "  The quick brown fox jumps over the lazy dog.  " \
-                         "${FILE_PATH}";
-            then
-                convert -- "${preview_png}" "${IMAGE_CACHE_PATH}" \
-                    && rm "${preview_png}" \
-                    && exit 6
-            else
-                exit 1
-            fi
-            ;;
+        # application/font*|application/*opentype)
+        #     preview_png="/tmp/$(basename "${IMAGE_CACHE_PATH%.*}").png"
+        #     if fontimage -o "${preview_png}" \
+        #                  --pixelsize "120" \
+        #                  --fontname \
+        #                  --pixelsize "80" \
+        #                  --text "  ABCDEFGHIJKLMNOPQRSTUVWXYZ  " \
+        #                  --text "  abcdefghijklmnopqrstuvwxyz  " \
+        #                  --text "  0123456789.:,;(*!?') ff fl fi ffi ffl  " \
+        #                  --text "  The quick brown fox jumps over the lazy dog.  " \
+        #                  "${FILE_PATH}";
+        #     then
+        #         convert -- "${preview_png}" "${IMAGE_CACHE_PATH}" \
+        #             && rm "${preview_png}" \
+        #             && exit 6
+        #     else
+        #         exit 1
+        #     fi
+        #     ;;
 
         ## Preview archives using the first image inside.
         ## (Very useful for comic book collections for example.)
