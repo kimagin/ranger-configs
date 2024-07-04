@@ -310,7 +310,7 @@ class fasd_dir(Command):
 
 
 
-class git_repos(Command):
+class git_repos_win(Command):
     def execute(self):
         import os
         import subprocess
@@ -376,5 +376,134 @@ class git_repos(Command):
             self.fm.notify(f"Error in fd command: {e}", bad=True)
         except Exception as e:
             self.fm.notify(f"An error occurred: {str(e)}", bad=True)
+        finally:
+            self.fm.ui.initialize()
+
+
+class git_repos_mac(Command):
+    """
+    :git_repos [path]
+    Search for Git repositories in the given path (or HOME if not specified)
+    and navigate to the selected repository.
+    """
+    def execute(self):
+        import os
+        from ranger.ext.get_executables import get_executables
+
+        if self.arg(1):
+            search_dir = self.arg(1)
+        else:
+            search_dir = os.environ.get('HOME')
+
+        if 'fd' not in get_executables():
+            self.fm.notify("fd is not installed. Please install fd-find.", bad=True)
+            return
+
+        if 'fzf' not in get_executables():
+            self.fm.notify("fzf is not installed. Please install fzf.", bad=True)
+            return
+
+        # Use fd to find Git repositories
+        fd_cmd = [
+            'fd', '--hidden', '--type', 'd',
+            '--exclude', '.local',
+            '--exclude', '.Trash',
+            '--exclude', '.vscode',
+            '--exclude', '.tldrc',
+            '--exclude', 'Library/*',
+            '--exclude', '.cache',
+            '--exclude', '.vscode-server',
+            '--exclude', 'node_modules',
+            '--exclude', '.npm',
+            '--exclude', '.pnpm',
+            '^.git$', search_dir
+        ]
+        
+        try:
+            repos = subprocess.check_output(fd_cmd).decode('utf-8').strip()
+        except subprocess.CalledProcessError:
+            self.fm.notify("Error occurred while searching for repositories.", bad=True)
+            return
+
+        if not repos:
+            self.fm.notify("No Git repositories found.")
+            return
+
+        # Prepare repositories for fzf
+        repos = [os.path.dirname(os.path.dirname(repo)) for repo in repos.split('\n')]
+        repos = sorted(set(repos))  # Remove duplicates and sort
+
+        # Create a list of repo names with their full paths
+        repo_names_with_paths = [f"{os.path.basename(repo)}\t{repo}" for repo in repos]
+
+        # Use fzf to select a repository
+        fzf_cmd = [
+            'fzf',
+            '--preview', 'ls -la {2}',
+            '--preview-window=right:0%',
+            '--bind', 'ctrl-/:toggle-preview',
+            '--header', 'Select a Git repository',
+            '--border=sharp',
+            '--margin=1',
+            '--info=inline-right',
+            '--no-scrollbar',
+            '--prompt', '',
+            '--with-nth=1'
+        ]
+
+        try:
+            fzf = subprocess.Popen(fzf_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            selected_repo = fzf.communicate(input='\n'.join(repo_names_with_paths).encode())[0].decode('utf-8').strip()
+        except subprocess.CalledProcessError:
+            self.fm.notify("Error occurred while selecting repository.", bad=True)
+            return
+
+        if selected_repo:
+            # Extract the full path from the selected repo
+            selected_repo_path = selected_repo.split('\t')[1]
+            self.fm.notify(f"Navigating to {selected_repo_path}")
+            self.fm.cd(selected_repo_path)
+        else:
+            self.fm.notify("No repository selected")
+
+
+
+class git_repos(Command):
+    def execute(self):
+        import os, subprocess, platform
+
+        search_dir = self.arg(1) or os.environ.get('HOME')
+        is_mac = platform.system() == 'Darwin'
+
+        fd_cmd = f"""
+        fd --hidden --type d -E '.local' -E '.Trash' -E '.vscode' -E '.tldrc' -E 'Library/*' -E '.cache' -E '.vscode-server' -E 'node_modules' -E '.npm' -E '.pnpm' '^.git$' {search_dir} |
+        xargs -n1 dirname |
+        sort -u |
+        while read dir; do
+            printf "%-30s | %s | %s\\n" "$(basename "$dir")" "$(stat {"-f" if is_mac else "-c"} "%m" "$dir")" "$dir"
+        done |
+        sort -k2nr
+        """
+
+        fzf_cmd = """
+        fzf --preview 'ls -la {3}' \
+            --preview-window=right:0% \
+            --bind 'ctrl-/:toggle-preview' \
+            --header 'Select a Git repository (Name | Modified | Path)' \
+            --border=sharp \
+            --margin=1 \
+            --info=inline-right \
+            --prompt '' \
+            --with-nth=1,2
+        """
+
+        try:
+            self.fm.ui.suspend()
+            repos = subprocess.run(fd_cmd, shell=True, text=True, capture_output=True, check=True).stdout
+            if not repos.strip(): raise ValueError("No Git repositories found.")
+            selected = subprocess.run(fzf_cmd, input=repos, shell=True, text=True, capture_output=True).stdout.strip()
+            if selected: self.fm.cd(selected.split('|')[-1].strip())
+        except Exception as e:
+            self.fm.notify(str(e), bad=True)
         finally:
             self.fm.ui.initialize()
