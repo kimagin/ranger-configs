@@ -305,3 +305,93 @@ class fasd_dir(Command):
                 self.fm.cd(fzf_file)
             else:
                 self.fm.select_file(fzf_file)
+
+
+
+
+
+class git_repos(Command):
+    """
+    :git_repos [path]
+    Search for Git repositories in the given path (or HOME if not specified)
+    and navigate to the selected repository.
+    """
+    def execute(self):
+        import os
+        from ranger.ext.get_executables import get_executables
+
+        if self.arg(1):
+            search_dir = self.arg(1)
+        else:
+            search_dir = os.environ.get('HOME')
+
+        if 'fd' not in get_executables():
+            self.fm.notify("fd is not installed. Please install fd-find.", bad=True)
+            return
+
+        if 'fzf' not in get_executables():
+            self.fm.notify("fzf is not installed. Please install fzf.", bad=True)
+            return
+
+        # Use fd to find Git repositories
+        fd_cmd = [
+            'fd', '--hidden', '--type', 'd',
+            '--exclude', '.local',
+            '--exclude', '.Trash',
+            '--exclude', '.vscode',
+            '--exclude', '.tldrc',
+            '--exclude', 'Library/*',
+            '--exclude', '.cache',
+            '--exclude', '.vscode-server',
+            '--exclude', 'node_modules',
+            '--exclude', '.npm',
+            '--exclude', '.pnpm',
+            '^.git$', search_dir
+        ]
+        
+        try:
+            repos = subprocess.check_output(fd_cmd).decode('utf-8').strip()
+        except subprocess.CalledProcessError:
+            self.fm.notify("Error occurred while searching for repositories.", bad=True)
+            return
+
+        if not repos:
+            self.fm.notify("No Git repositories found.")
+            return
+
+        # Prepare repositories for fzf
+        repos = [os.path.dirname(os.path.dirname(repo)) for repo in repos.split('\n')]
+        repos = sorted(set(repos))  # Remove duplicates and sort
+
+        # Create a list of repo names with their full paths
+        repo_names_with_paths = [f"{os.path.basename(repo)}\t{repo}" for repo in repos]
+
+        # Use fzf to select a repository
+        fzf_cmd = [
+            'fzf',
+            '--preview', 'ls -la {2}',
+            '--preview-window=right:0%',
+            '--bind', 'ctrl-/:toggle-preview',
+            '--header', 'Select a Git repository',
+            '--border=sharp',
+            '--margin=1',
+            '--info=inline-right',
+            '--no-scrollbar',
+            '--prompt', '',
+            '--with-nth=1'
+        ]
+
+        try:
+            fzf = subprocess.Popen(fzf_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            selected_repo = fzf.communicate(input='\n'.join(repo_names_with_paths).encode())[0].decode('utf-8').strip()
+        except subprocess.CalledProcessError:
+            self.fm.notify("Error occurred while selecting repository.", bad=True)
+            return
+
+        if selected_repo:
+            # Extract the full path from the selected repo
+            selected_repo_path = selected_repo.split('\t')[1]
+            self.fm.notify(f"Navigating to {selected_repo_path}")
+            self.fm.cd(selected_repo_path)
+        else:
+            self.fm.notify("No repository selected")
