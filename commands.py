@@ -11,7 +11,7 @@ from __future__ import (absolute_import, division, print_function)
 
 # You can import any python module as needed.
 import os
-
+import time 
 # You always need to import ranger.api.commands here to get the Command class:
 from ranger.api.commands import Command
 
@@ -311,87 +311,70 @@ class fasd_dir(Command):
 
 
 class git_repos(Command):
-    """
-    :git_repos [path]
-    Search for Git repositories in the given path (or HOME if not specified)
-    and navigate to the selected repository.
-    """
     def execute(self):
         import os
-        from ranger.ext.get_executables import get_executables
+        import subprocess
+        import time
 
-        if self.arg(1):
-            search_dir = self.arg(1)
-        else:
-            search_dir = os.environ.get('HOME')
+        search_dir = self.arg(1) or os.environ.get('HOME')
 
-        if 'fd' not in get_executables():
-            self.fm.notify("fd is not installed. Please install fd-find.", bad=True)
-            return
+        fd_cmd = f"""
+        fd --hidden --type d -E '.local' -E '.Trash' -E '.vscode' -E '.tldrc' -E 'Library/*' -E '.cache' -E '.vscode-server' -E 'node_modules' -E '.npm' -E '.pnpm' '^.git$' {search_dir} | 
+        xargs -n1 dirname | 
+        sort -u | 
+        xargs -I{{}} sh -c 'printf "%-30s %s | %-8s | %s\\n" "$(basename {{}})" "$(stat -c "%y" {{}} | cut -d. -f1)" "$(stat -c "%y" {{}} | cut -d. -f1 | cut -d: -f1,2)" "{{}}"' | 
+        sort -k2,3r
+        """
 
-        if 'fzf' not in get_executables():
-            self.fm.notify("fzf is not installed. Please install fzf.", bad=True)
-            return
-
-        # Use fd to find Git repositories
-        fd_cmd = [
-            'fd', '--hidden', '--type', 'd',
-            '--exclude', '.local',
-            '--exclude', '.Trash',
-            '--exclude', '.vscode',
-            '--exclude', '.tldrc',
-            '--exclude', 'Library/*',
-            '--exclude', '.cache',
-            '--exclude', '.vscode-server',
-            '--exclude', 'node_modules',
-            '--exclude', '.npm',
-            '--exclude', '.pnpm',
-            '^.git$', search_dir
-        ]
-        
-        try:
-            repos = subprocess.check_output(fd_cmd).decode('utf-8').strip()
-        except subprocess.CalledProcessError:
-            self.fm.notify("Error occurred while searching for repositories.", bad=True)
-            return
-
-        if not repos:
-            self.fm.notify("No Git repositories found.")
-            return
-
-        # Prepare repositories for fzf
-        repos = [os.path.dirname(os.path.dirname(repo)) for repo in repos.split('\n')]
-        repos = sorted(set(repos))  # Remove duplicates and sort
-
-        # Create a list of repo names with their full paths
-        repo_names_with_paths = [f"{os.path.basename(repo)}\t{repo}" for repo in repos]
-
-        # Use fzf to select a repository
-        fzf_cmd = [
-            'fzf',
-            '--preview', 'ls -la {2}',
-            '--preview-window=right:0%',
-            '--bind', 'ctrl-/:toggle-preview',
-            '--header', 'Select a Git repository',
-            '--border=sharp',
-            '--margin=1',
-            '--info=inline-right',
-            '--no-scrollbar',
-            '--prompt', '',
-            '--with-nth=1'
-        ]
+        fzf_cmd = """
+        fzf --preview 'ls -la {4}' \
+            --preview-window=right:0% \
+            --bind 'ctrl-/:toggle-preview' \
+            --header 'Select a Git repository (Name | Last modified date | Time | Path)' \
+            --border=sharp \
+            --margin=1 \
+            --info=inline-right \
+            --no-scrollbar \
+            --prompt '' \
+            --with-nth=1,2,3
+        """
 
         try:
-            fzf = subprocess.Popen(fzf_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-            selected_repo = fzf.communicate(input='\n'.join(repo_names_with_paths).encode())[0].decode('utf-8').strip()
-        except subprocess.CalledProcessError:
-            self.fm.notify("Error occurred while selecting repository.", bad=True)
-            return
+            self.fm.ui.suspend()
+            
+            start_time = time.time()
+            
+            # Execute fd command
+            repos = subprocess.run(fd_cmd, shell=True, text=True, capture_output=True, check=True)
+            repo_list = repos.stdout.strip()
+            
+            fd_time = time.time()
+            self.fm.notify(f"fd took {fd_time - start_time:.2f} seconds")
+            
+            if not repo_list:
+                self.fm.notify("No Git repositories found.")
+                return
 
-        if selected_repo:
-            # Extract the full path from the selected repo
-            selected_repo_path = selected_repo.split('\t')[1]
-            self.fm.notify(f"Navigating to {selected_repo_path}")
-            self.fm.cd(selected_repo_path)
-        else:
-            self.fm.notify("No repository selected")
+            # Execute fzf command
+            fzf = subprocess.run(fzf_cmd, input=repo_list, shell=True, text=True, capture_output=True)
+            
+            fzf_time = time.time()
+            self.fm.notify(f"fzf took {fzf_time - fd_time:.2f} seconds")
+            
+            if fzf.returncode == 0:
+                selected_repo = fzf.stdout.strip().split('|')[-1].strip()
+                if selected_repo:
+                    self.fm.cd(selected_repo)
+                else:
+                    self.fm.notify("No repository selected")
+            elif fzf.returncode != 130:  # 130 is the exit code when user cancels fzf
+                self.fm.notify("Error occurred while selecting repository.", bad=True)
+            
+            end_time = time.time()
+            self.fm.notify(f"Total execution time: {end_time - start_time:.2f} seconds")
+        except subprocess.CalledProcessError as e:
+            self.fm.notify(f"Error in fd command: {e}", bad=True)
+        except Exception as e:
+            self.fm.notify(f"An error occurred: {str(e)}", bad=True)
+        finally:
+            self.fm.ui.initialize()
